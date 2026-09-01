@@ -1,0 +1,20 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "marcobalossini98@gmail.com",
+                "Name": "Marco Balossini"
+            }
+        ],
+        "Category": "Utilities",
+        "Description": "A minimal kanban board for your desktop",
+        "EnabledByDefault": true,
+        "Icon": "view-task",
+        "Id": "org.kde.plasma.kanbanboard",
+        "License": "GPL-3.0+",
+        "Name": "Kanban Board",
+        "Version": "1.1"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
