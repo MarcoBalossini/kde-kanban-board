@@ -1,6 +1,9 @@
 import QtQuick
 import QtQuick.Layouts
 import QtTest
+import org.kde.kirigami as Kirigami
+
+import "dates.js" as Dates
 
 Item {
     id: win
@@ -22,6 +25,7 @@ Item {
         property bool cfgCompactCards: false
         property bool cfgStrikeDone: true
         property bool cfgHideDone: false
+        property string todayIso: Dates.toIso(new Date())
         property int columnCount: 3
         property Item dragLayer: dl
         property int saves: 0
@@ -57,6 +61,21 @@ Item {
     }
 
     Item { id: dl; anchors.fill: parent; z: 1000 }
+
+    // The deadline picker, driven directly: on a card it is built lazily inside
+    // a Loader, which there is no way to reach through a ListView delegate.
+    DuePicker { id: picker }
+
+    SignalSpy { id: pickedSpy; target: picker; signalName: "picked" }
+    SignalSpy { id: clearedSpy; target: picker; signalName: "cleared" }
+
+    // The stored copy of a card, by the text it carries.
+    function storedTask(col, sec, text) {
+        var arr = JSON.parse(mockBoard.stored[col])[sec].tasks;
+        for (var i = 0; i < arr.length; i++)
+            if (arr[i].text === text) return arr[i];
+        return null;
+    }
 
     function texts(c) {
         var s = [];
@@ -254,6 +273,146 @@ Item {
             compare(JSON.parse(mockBoard.stored[1])[0].name, "");
         }
 
+        // ---- steps ------------------------------------------------------
+        function test_18_split_card_into_steps() {
+            var s = win.cols[0].sectionAt(0);
+            var i = s.tasksModel.count;
+            s.addTask("write post", false);
+            compare(s.stepsOf(i).length, 0);      // a plain card carries none
+
+            s.addStep(i, "outline");
+            s.addStep(i, "draft");
+            s.addStep(i, "   ");                  // whitespace ignored
+            compare(s.stepsOf(i).length, 2);
+            compare(s.stepsOf(i)[0].text, "outline");
+            compare(s.stepsOf(i)[0].done, false);
+            // splitting a card opens its checklist
+            compare(s.tasksModel.get(i).stepsOpen, true);
+            s.setStepsOpen(i, false);
+            compare(s.tasksModel.get(i).stepsOpen, false);
+
+            // and the steps are written back with the card
+            var back = JSON.parse(mockBoard.stored[0])[0].tasks;
+            var stored = null;
+            for (var k = 0; k < back.length; k++)
+                if (back[k].text === "write post") stored = back[k];
+            verify(stored !== null);
+            compare(stored.steps.length, 2);
+            compare(stored.steps[1].text, "draft");
+
+            // a card nobody split stays exactly as small as it was
+            s.addTask("unsplit card", false);
+            var again = JSON.parse(mockBoard.stored[0])[0].tasks;
+            var plain = null;
+            for (var m = 0; m < again.length; m++)
+                if (again[m].text === "unsplit card") plain = again[m];
+            verify(plain !== null);
+            compare(plain.steps, undefined);
+            compare(plain.stepsOpen, undefined);
+        }
+
+        function test_19_last_step_completes_the_card() {
+            var s = win.cols[1].sectionAt(0);
+            var i = s.tasksModel.count;
+            s.addTask("release", false);
+            s.addStep(i, "build");
+            s.addStep(i, "sign");
+            verify(!s.tasksModel.get(i).done);
+
+            s.toggleStep(i, 0);
+            verify(!s.tasksModel.get(i).done);    // one of two
+            s.toggleStep(i, 1);
+            verify(s.tasksModel.get(i).done);     // all of them
+            s.toggleStep(i, 1);
+            verify(!s.tasksModel.get(i).done);    // reopening a step reopens it
+
+            // a card with no steps is left alone
+            var k = s.tasksModel.count;
+            s.addTask("plain card", false);
+            verify(!s.tasksModel.get(k).done);
+            s.toggleDone(k);
+            verify(s.tasksModel.get(k).done);
+        }
+
+        function test_20_steps_ride_along_on_a_move() {
+            var c = win.cols[0];
+            var from = c.sectionAt(0), to = c.sectionAt(1);
+            var i = from.tasksModel.count;
+            from.addTask("ship it", false);
+            from.addStep(i, "tag");
+            from.addStep(i, "upload");
+            from.toggleStep(i, 0);
+
+            var j = to.tasksModel.count;
+            to.acceptDrop({ columnItem: from, taskIndex: i }, j);
+            compare(to.tasksModel.get(j).text, "ship it");
+            var steps = to.stepsOf(j);
+            compare(steps.length, 2);
+            compare(steps[0].text, "tag");
+            compare(steps[0].done, true);
+            compare(steps[1].done, false);
+            compare(to.tasksModel.get(j).stepsOpen, true);
+        }
+
+        function test_21_editing_and_clearing_steps() {
+            var s = win.cols[2].sectionAt(0);
+            var i = s.tasksModel.count;
+            s.addTask("trip", false);
+            s.addStep(i, "book");
+            s.addStep(i, "pack");
+            s.addStep(i, "go");
+
+            s.setStepText(i, 0, "  book flight  ");
+            compare(s.stepsOf(i)[0].text, "book flight");
+            s.setStepText(i, 1, "   ");            // clearing a step deletes it
+            compare(s.stepsOf(i).length, 2);
+            compare(s.stepsOf(i)[1].text, "go");
+
+            s.moveStep(i, 1, 0);
+            compare(s.stepsOf(i)[0].text, "go");
+
+            s.toggleStep(i, 0);
+            s.clearDoneSteps(i);
+            compare(s.stepsOf(i).length, 1);
+            compare(s.stepsOf(i)[0].text, "book flight");
+
+            s.removeStep(i, 0);
+            compare(s.stepsOf(i).length, 0);
+            // losing every step never loses the card
+            compare(s.tasksModel.get(i).text, "trip");
+
+            s.addStep(i, "again");
+            s.clearSteps(i);                       // back to a plain card
+            compare(s.stepsOf(i).length, 0);
+            compare(s.tasksModel.get(i).stepsOpen, false);
+            compare(s.tasksModel.get(i).text, "trip");
+        }
+
+        function test_22_steps_survive_a_section_merge() {
+            var c = win.cols[0];
+            var into = c.sectionAt(0);
+            c.removeSection(1);                    // its cards join the block above
+            compare(c.sectionCount, 2);
+
+            var moved = -1;
+            for (var i = 0; i < into.tasksModel.count; i++)
+                if (into.tasksModel.get(i).text === "ship it") moved = i;
+            verify(moved >= 0);
+            var steps = into.stepsOf(moved);
+            compare(steps.length, 2);
+            compare(steps[0].text, "tag");
+            compare(steps[0].done, true);
+
+            // ... and through the store
+            var back = JSON.parse(mockBoard.stored[0])[0].tasks;
+            var stored = null;
+            for (var k = 0; k < back.length; k++)
+                if (back[k].text === "ship it") stored = back[k];
+            verify(stored !== null);
+            compare(stored.steps.length, 2);
+            compare(stored.steps[1].text, "upload");
+        }
+
         function test_17_block_height_follows_its_cards() {
             var c = win.cols[0];
             var i = c.addSection("Sizing");
@@ -274,6 +433,153 @@ Item {
             tryVerify(function() { return s.contentHeight > one; });
             compare(s.bodyHeight, s.contentHeight);
             verify(s.bodyHeight > one);
+        }
+
+        // ---- deadlines --------------------------------------------------
+        function test_23_deadline_set_and_cleared() {
+            var s = win.cols[1].sectionAt(0);
+            var i = s.tasksModel.count;
+            s.addTask("file taxes", false);
+            compare(s.dueOf(i), "");             // a plain card carries none
+
+            s.setDue(i, "2026-12-24");
+            compare(s.dueOf(i), "2026-12-24");
+            var stored = storedTask(1, 0, "file taxes");
+            verify(stored !== null);
+            compare(stored.due, "2026-12-24");
+
+            // a date nobody could reach is no deadline at all
+            s.setDue(i, "2026-02-31");
+            compare(s.dueOf(i), "");
+            s.setDue(i, "  2027-01-05  ");       // padding is trimmed off
+            compare(s.dueOf(i), "2027-01-05");
+
+            s.clearDue(i);
+            compare(s.dueOf(i), "");
+            compare(storedTask(1, 0, "file taxes").due, undefined);
+
+            // a card nobody dated stays exactly as small as it was
+            s.addTask("undated", false);
+            compare(storedTask(1, 0, "undated").due, undefined);
+        }
+
+        function test_24_deadline_rides_along_on_a_move() {
+            var from = win.cols[1].sectionAt(0);
+            var i = from.tasksModel.count;
+            from.addTask("renew passport", false);
+            from.setDue(i, "2027-03-09");
+
+            var to = win.cols[2].sectionAt(0);
+            var j = to.tasksModel.count;
+            to.acceptDrop({ columnItem: from, taskIndex: i }, j);
+            compare(to.tasksModel.get(j).text, "renew passport");
+            compare(to.dueOf(j), "2027-03-09");
+            compare(storedTask(2, 0, "renew passport").due, "2027-03-09");
+        }
+
+        function test_25_overdue_counts_only_open_cards() {
+            var s = win.cols[2].sectionAt(1);
+            var before = s.overdueTasks;
+            var boardBefore = win.cols[2].overdueTasks;
+
+            var i = s.tasksModel.count;
+            s.addTask("was due", false);
+            s.setDue(i, Dates.shift(-3));
+            compare(s.overdueTasks, before + 1);
+            compare(win.cols[2].overdueTasks, boardBefore + 1);
+
+            // today is not late yet
+            var j = s.tasksModel.count;
+            s.addTask("due today", false);
+            s.setDue(j, Dates.shift(0));
+            compare(s.overdueTasks, before + 1);
+
+            // and finishing a card takes it off the count for good
+            s.toggleDone(i);
+            compare(s.overdueTasks, before);
+            compare(win.cols[2].overdueTasks, boardBefore);
+        }
+
+        function test_26_date_math() {
+            verify(Dates.isValid("2026-09-01"));
+            verify(!Dates.isValid("2026-02-31"));   // Date rolls it over; we do not
+            verify(!Dates.isValid("2026-9-1"));
+            verify(!Dates.isValid("tomorrow"));
+            verify(!Dates.isValid(""));
+            verify(!Dates.isValid(undefined));
+
+            compare(Dates.daysUntil(Dates.shift(0)), 0);
+            compare(Dates.daysUntil(Dates.shift(1)), 1);
+            compare(Dates.daysUntil(Dates.shift(-2)), -2);
+            verify(isNaN(Dates.daysUntil("")));
+
+            compare(Dates.toIso(new Date(2026, 8, 1)), "2026-09-01");
+            compare(Dates.toIso(Dates.addDays(new Date(2026, 11, 31), 1)), "2027-01-01");
+            compare(Dates.toIso(Dates.addDays(new Date(2026, 8, 1), -1)), "2026-08-31");
+
+            // a month grid starts on the locale's first weekday, before the 1st
+            compare(Dates.toIso(Dates.gridStart(2026, 8, 1)), "2026-08-31");  // Monday
+            compare(Dates.toIso(Dates.gridStart(2026, 8, 0)), "2026-08-30");  // Sunday
+        }
+
+        function test_27_picker_opens_where_the_card_already_is() {
+            picker.showAt("2026-09-14", Qt.rect(0, 0, 200, 30), Qt.rect(0, 0, 600, 600));
+            compare(picker.selected, "2026-09-14");
+            compare(picker.shownYear, 2026);
+            compare(picker.shownMonth, 8);
+
+            picker.stepMonth(4);                       // rolls over into next year
+            compare(picker.shownYear, 2027);
+            compare(picker.shownMonth, 0);
+            compare(picker.selected, "2026-09-14");    // paging changes no card
+
+            picker.choose("2027-01-20");
+            compare(pickedSpy.count, 1);
+            compare(pickedSpy.signalArguments[0][0], "2027-01-20");
+            tryVerify(function() { return !picker.visible; });
+
+            // a card with no deadline yet opens on this month
+            var now = new Date();
+            picker.showAt("", Qt.rect(0, 0, 200, 30), Qt.rect(0, 0, 600, 600));
+            compare(picker.selected, "");
+            compare(picker.shownYear, now.getFullYear());
+            compare(picker.shownMonth, now.getMonth());
+
+            picker.clear();
+            compare(clearedSpy.count, 1);
+            compare(picker.selected, "");
+            tryVerify(function() { return !picker.visible; });
+        }
+
+        function test_28_picker_stays_inside_the_room_it_is_given() {
+            var gap = Kirigami.Units.smallSpacing;
+            var anchor = Qt.rect(0, 0, 200, 30);
+            var h = picker.implicitHeight;
+            var w = picker.implicitWidth;
+
+            // room below: it opens under the card
+            picker.showAt("", anchor, Qt.rect(0, 0, 600, h * 3));
+            compare(picker.y, anchor.height + gap);
+            picker.close();
+
+            // no room below but room above: it flips over the card
+            var low = Qt.rect(0, 0, 200, h * 2);
+            picker.showAt("", low, Qt.rect(0, -h - 2 * gap, 600, h * 3));
+            compare(picker.y, low.y - gap - h);
+            picker.close();
+
+            // room on neither side: it is pushed back off the bottom edge
+            var bounds = Qt.rect(0, 0, 600, h + 10);
+            picker.showAt("", low, bounds);
+            compare(picker.y, bounds.height - h);
+            verify(picker.y >= bounds.y);
+            picker.close();
+
+            // and off the right edge, whatever the card's own x is
+            var narrow = Qt.rect(0, 0, w + 20, h * 3);
+            picker.showAt("", Qt.rect(w, 0, 200, 30), narrow);
+            compare(picker.x, narrow.width - w);
+            picker.close();
         }
     }
 }

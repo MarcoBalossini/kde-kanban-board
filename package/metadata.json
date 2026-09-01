@@ -10,7 +10,7 @@
         "Category": "Utilities",
         "Description": "A minimal kanban board for your desktop",
         "EnabledByDefault": true,
-        "Icon": "view-task",
+        "Icon": "org.kde.plasma.kanbanboard",
         "Id": "org.kde.plasma.kanbanboard",
         "License": "GPL-3.0+",
         "Name": "Kanban Board",

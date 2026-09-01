@@ -5,6 +5,8 @@ import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.components as PC3
 import org.kde.kirigami as Kirigami
 
+import "dates.js" as Dates
+
 PlasmoidItem {
     id: root
 
@@ -38,6 +40,25 @@ PlasmoidItem {
     property Item boardItem: null
     property int openCount: 0
     property int doneCount: 0
+    property int overdueCount: 0
+
+    // Today, as cards store it. Cards colour themselves by how far off their
+    // deadline is, so the board has to notice the date turning over: a widget
+    // left open overnight would go on calling yesterday "Today".
+    property string todayIso: Dates.toIso(new Date())
+
+    Timer {
+        interval: 60000
+        repeat: true
+        running: true
+        onTriggered: {
+            var t = Dates.toIso(new Date());
+            if (t !== root.todayIso) {
+                root.todayIso = t;
+                root.recount();
+            }
+        }
+    }
 
     // Roles: name, accent, sectionsJson. A list holds one or more vertical
     // sections, each with its own cards. Everything lives in the model rather
@@ -125,17 +146,25 @@ PlasmoidItem {
     }
 
     function recount() {
-        var open = 0, done = 0;
+        var open = 0, done = 0, late = 0;
         for (var i = 0; i < columnsModel.count; i++) {
             var secs = sectionsOf(i);
             for (var j = 0; j < secs.length; j++) {
                 var tasks = secs[j].tasks || [];
-                for (var k = 0; k < tasks.length; k++)
-                    tasks[k].done ? done++ : open++;
+                for (var k = 0; k < tasks.length; k++) {
+                    if (tasks[k].done) {
+                        done++;
+                        continue;
+                    }
+                    open++;
+                    var d = Dates.daysUntil(tasks[k].due);
+                    if (!isNaN(d) && d < 0) late++;
+                }
             }
         }
         openCount = open;
         doneCount = done;
+        overdueCount = late;
     }
 
     function scheduleSave() {
@@ -188,8 +217,13 @@ PlasmoidItem {
     preferredRepresentation: fullRepresentation
 
     toolTipMainText: Plasmoid.configuration.boardTitle
-    toolTipSubText: openCount === 0 ? i18n("Nothing pending")
-                                    : i18np("%1 open task", "%1 open tasks", openCount)
+    toolTipSubText: {
+        if (openCount === 0) return i18n("Nothing pending");
+        var s = i18np("%1 open task", "%1 open tasks", openCount);
+        if (overdueCount > 0)
+            s += " — " + i18np("%1 overdue", "%1 overdue", overdueCount);
+        return s;
+    }
 
     Component.onCompleted: load()
 
@@ -202,7 +236,10 @@ PlasmoidItem {
 
         Kirigami.Icon {
             anchors.fill: parent
-            source: "view-task"
+            // The bundled logo, not a theme name: the icon only lands in the
+            // icon theme when install.sh puts it there, and the panel should
+            // show it either way.
+            source: Qt.resolvedUrl("../icons/org.kde.plasma.kanbanboard.svg")
             active: compact.containsMouse
         }
         Rectangle {
@@ -211,7 +248,8 @@ PlasmoidItem {
             height: Math.round(parent.height * 0.5)
             width: Math.max(height, badge.implicitWidth + Kirigami.Units.smallSpacing)
             radius: height / 2
-            color: root.accentColor(0)
+            color: root.overdueCount > 0 ? Kirigami.Theme.negativeTextColor
+                                         : root.accentColor(0)
             PC3.Label {
                 id: badge
                 anchors.centerIn: parent

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Three columns of cards, top-aligned and thinning out to the right:
+       three, two, one. The vertical gutter is tighter than the horizontal one
+       so each column still reads as a stack. -->
+  <g fill="#5b8def">
+    <rect x="3" y="6" width="16" height="15" rx="3"/>
+    <rect x="3" y="24" width="16" height="15" rx="3"/>
+    <rect x="3" y="42" width="16" height="15" rx="3"/>
+  </g>
+  <g fill="#f0a63a">
+    <rect x="24" y="6" width="16" height="15" rx="3"/>
+    <rect x="24" y="24" width="16" height="15" rx="3"/>
+  </g>
+  <g fill="#3ec98a">
+    <rect x="45" y="6" width="16" height="15" rx="3"/>
+  </g>
+</svg>

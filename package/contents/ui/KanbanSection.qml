@@ -3,6 +3,8 @@ import QtQuick.Layouts
 import org.kde.plasma.components as PC3
 import org.kde.kirigami as Kirigami
 
+import "dates.js" as Dates
+
 // One block inside a list: an optional header plus its own stack of cards.
 // A list that was never split holds exactly one nameless section, which renders
 // without any chrome, so an unsplit board looks exactly as it did before.
@@ -90,8 +92,40 @@ Item {
             text: t.text || "",
             done: t.done === true,
             important: t.important === true,
-            created: t.created || 0
+            created: t.created || 0,
+            // The day the card is due, "YYYY-MM-DD", or "" for a card nobody
+            // put a date on. Anything unparseable is read as no deadline
+            // rather than as a date the card can never reach.
+            due: Dates.isValid(t.due) ? t.due.trim() : "",
+            // A card can be split into steps. They are held as JSON on the card
+            // for the same reason a list holds its sections as JSON: the model
+            // is the truth, so a rebuilt delegate reseeds from it.
+            stepsJson: JSON.stringify(stepsFrom(t)),
+            stepsOpen: t.stepsOpen === true
         };
+    }
+
+    // Accepts either shape: a card out of the store carries a steps array, a
+    // card copied straight out of the model carries the JSON it is stored as.
+    function stepsFrom(t) {
+        var raw = t.steps;
+        if (raw === undefined && typeof t.stepsJson === "string") {
+            try {
+                raw = JSON.parse(t.stepsJson);
+            } catch (e) {
+                raw = [];
+            }
+        }
+        if (!raw || raw.length === undefined) return [];
+        var out = [];
+        for (var i = 0; i < raw.length; i++) {
+            var s = raw[i];
+            if (!s) continue;
+            var text = (s.text || "").trim();
+            if (text.length === 0) continue;
+            out.push({ id: s.id || board.newId(), text: text, done: s.done === true });
+        }
+        return out;
     }
 
     // ---- task ops ------------------------------------------------------
@@ -104,8 +138,18 @@ Item {
         var arr = [];
         for (var i = 0; i < tasksModel.count; i++) {
             var t = tasksModel.get(i);
-            arr.push({ id: t.taskId, text: t.text, done: t.done,
-                       important: t.important, created: t.created });
+            var e = { id: t.taskId, text: t.text, done: t.done,
+                      important: t.important, created: t.created };
+            // Only a card that was actually split, or actually given a
+            // deadline, carries the extra keys, so a board of plain cards stays
+            // exactly as small as it was.
+            if (t.due && t.due.length > 0) e.due = t.due;
+            var steps = stepsOf(i);
+            if (steps.length > 0) {
+                e.steps = steps;
+                if (t.stepsOpen === true) e.stepsOpen = true;
+            }
+            arr.push(e);
         }
         return arr;
     }
@@ -127,8 +171,11 @@ Item {
     function addTask(text, atTop) {
         var t = text.trim();
         if (t.length === 0) return;
-        var entry = { taskId: board.newId(), text: t, done: false,
-                      important: false, created: Date.now() };
+        // Through normalize() so a card typed into an empty block still gets
+        // every role: a ListModel fixes its roles on the first insert, and a
+        // card that never had a steps role could never grow one.
+        var entry = normalize({ text: t, done: false, important: false,
+                                created: Date.now() });
         if (atTop) tasksModel.insert(0, entry);
         else tasksModel.append(entry);
         touch();
@@ -162,11 +209,137 @@ Item {
         touch();
     }
 
+    // ---- deadlines -----------------------------------------------------
+    // A card is due on a day. An empty or unparseable date clears the deadline,
+    // so the picker's "No deadline" button and a bad value take the same path.
+    function setDue(i, iso) {
+        if (i < 0 || i >= tasksModel.count) return;
+        tasksModel.setProperty(i, "due", Dates.isValid(iso) ? iso.trim() : "");
+        touch();
+    }
+
+    function clearDue(i) {
+        setDue(i, "");
+    }
+
+    function dueOf(i) {
+        if (i < 0 || i >= tasksModel.count) return "";
+        return tasksModel.get(i).due || "";
+    }
+
+    // ---- steps ---------------------------------------------------------
+    // A card too big for one line is split into steps: a checklist that lives
+    // on the card itself rather than becoming three cards of its own.
+    function stepsOf(i) {
+        if (i < 0 || i >= tasksModel.count) return [];
+        try {
+            return JSON.parse(tasksModel.get(i).stepsJson) || [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function storeSteps(i, arr) {
+        if (i < 0 || i >= tasksModel.count) return;
+        tasksModel.setProperty(i, "stepsJson", JSON.stringify(arr));
+        syncDoneFromSteps(i, arr);
+        touch();
+    }
+
+    // Steps drive their card, never the other way round: ticking the last one
+    // completes the card and reopening one reopens it. A card with no steps is
+    // left alone, so the check circle keeps working exactly as it did.
+    function syncDoneFromSteps(i, arr) {
+        if (arr.length === 0) return;
+        var all = true;
+        for (var k = 0; k < arr.length; k++)
+            if (!arr[k].done) { all = false; break; }
+        if ((tasksModel.get(i).done === true) !== all)
+            tasksModel.setProperty(i, "done", all);
+    }
+
+    function addStep(i, text) {
+        var t = text.trim();
+        if (t.length === 0 || i < 0 || i >= tasksModel.count) return;
+        var arr = stepsOf(i);
+        arr.push({ id: board.newId(), text: t, done: false });
+        tasksModel.setProperty(i, "stepsOpen", true);
+        storeSteps(i, arr);
+    }
+
+    function removeStep(i, j) {
+        var arr = stepsOf(i);
+        if (j < 0 || j >= arr.length) return;
+        arr.splice(j, 1);
+        storeSteps(i, arr);
+    }
+
+    function toggleStep(i, j) {
+        var arr = stepsOf(i);
+        if (j < 0 || j >= arr.length) return;
+        arr[j].done = !arr[j].done;
+        storeSteps(i, arr);
+    }
+
+    function setStepText(i, j, text) {
+        var arr = stepsOf(i);
+        if (j < 0 || j >= arr.length) return;
+        var t = text.trim();
+        // Clearing a step deletes it, the same way clearing a card does.
+        if (t.length === 0) arr.splice(j, 1);
+        else arr[j].text = t;
+        storeSteps(i, arr);
+    }
+
+    function moveStep(i, from, to) {
+        var arr = stepsOf(i);
+        if (from === to || from < 0 || from >= arr.length
+            || to < 0 || to >= arr.length) return;
+        arr.splice(to, 0, arr.splice(from, 1)[0]);
+        storeSteps(i, arr);
+    }
+
+    function clearDoneSteps(i) {
+        var arr = stepsOf(i), out = [];
+        for (var k = 0; k < arr.length; k++)
+            if (!arr[k].done) out.push(arr[k]);
+        storeSteps(i, out);
+    }
+
+    // Back to a plain card, keeping the card itself and whatever it says.
+    function clearSteps(i) {
+        if (i < 0 || i >= tasksModel.count) return;
+        tasksModel.setProperty(i, "stepsJson", "[]");
+        tasksModel.setProperty(i, "stepsOpen", false);
+        touch();
+    }
+
+    function setStepsOpen(i, v) {
+        if (i < 0 || i >= tasksModel.count) return;
+        tasksModel.setProperty(i, "stepsOpen", v === true);
+        touch();
+    }
+
     readonly property int openTasks: {
         revision; // dependency
         var n = 0;
         for (var i = 0; i < tasksModel.count; i++)
             if (!tasksModel.get(i).done) n++;
+        return n;
+    }
+
+    // Open cards whose day has already passed. A finished card is never late,
+    // however long it sat there.
+    readonly property int overdueTasks: {
+        revision;
+        board.todayIso; // re-count when the day turns over
+        var n = 0;
+        for (var i = 0; i < tasksModel.count; i++) {
+            var t = tasksModel.get(i);
+            if (t.done) continue;
+            var d = Dates.daysUntil(t.due);
+            if (!isNaN(d) && d < 0) n++;
+        }
         return n;
     }
 
@@ -219,7 +392,9 @@ Item {
         } else {
             var t = src.tasksModel.get(from);
             var copy = { taskId: t.taskId, text: t.text, done: t.done,
-                         important: t.important, created: t.created };
+                         important: t.important, created: t.created,
+                         due: t.due || "",
+                         stepsJson: t.stepsJson, stepsOpen: t.stepsOpen === true };
             src.tasksModel.remove(from);
             tasksModel.insert(Math.min(idx, tasksModel.count), copy);
             src.touch();
@@ -302,6 +477,17 @@ Item {
                 onAccepted: section.commitRename()
                 onActiveFocusChanged: if (!activeFocus && visible) section.commitRename()
                 Keys.onEscapePressed: visible = false
+            }
+
+            // A folded block must still admit it is late, so this sits in the
+            // title strip rather than on the cards it is counting.
+            PC3.Label {
+                visible: !sectionRename.visible && section.overdueTasks > 0
+                Layout.preferredHeight: sectionTitle.Layout.preferredHeight
+                verticalAlignment: Text.AlignVCenter
+                text: i18np("%1 late", "%1 late", section.overdueTasks)
+                color: Kirigami.Theme.negativeTextColor
+                font: Kirigami.Theme.smallFont
             }
 
             PC3.Label {

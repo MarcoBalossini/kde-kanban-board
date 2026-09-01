@@ -14,6 +14,12 @@ Item {
     property bool showIdleHint: true
     property bool active: false
 
+    // The same row also adds steps inside a card, where it is smaller and says
+    // something else.
+    property string hintText: i18n("Add task")
+    property string fieldPlaceholder: i18n("What needs doing?")
+    property real hintHeight: Kirigami.Units.gridUnit * 1.8
+
     implicitHeight: active ? field.implicitHeight
                            : (showIdleHint ? hint.implicitHeight : 0)
 
@@ -32,7 +38,7 @@ Item {
         anchors.fill: parent
         visible: !composer.active && composer.showIdleHint
         radius: Kirigami.Units.cornerRadius
-        implicitHeight: Kirigami.Units.gridUnit * 1.8
+        implicitHeight: composer.hintHeight
         color: hintArea.containsMouse ? Qt.alpha(Kirigami.Theme.textColor, 0.07) : "transparent"
         Behavior on color { ColorAnimation { duration: 120 } }
 
@@ -47,7 +53,7 @@ Item {
                 opacity: 0.5
             }
             PC3.Label {
-                text: i18n("Add task")
+                text: composer.hintText
                 opacity: 0.5
                 font: Kirigami.Theme.smallFont
             }
@@ -66,7 +72,7 @@ Item {
         id: field
         anchors.fill: parent
         visible: composer.active
-        placeholderText: i18n("What needs doing?")
+        placeholderText: composer.fieldPlaceholder
 
         onAccepted: {
             if (text.trim().length > 0) {

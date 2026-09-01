@@ -3,6 +3,8 @@ import QtQuick.Layouts
 import org.kde.plasma.components as PC3
 import org.kde.kirigami as Kirigami
 
+import "dates.js" as Dates
+
 Item {
     id: column
 
@@ -210,6 +212,10 @@ Item {
         var s = sectionAt(0);
         if (s) s.setText(i, text);
     }
+    function setDue(i, iso) {
+        var s = sectionAt(0);
+        if (s) s.setDue(i, iso);
+    }
     function touch() {
         var s = sectionAt(0);
         if (s) s.touch();
@@ -257,6 +263,23 @@ Item {
             var arr = taskArrayOf(i);
             for (var j = 0; j < arr.length; j++)
                 if (arr[j].done) n++;
+        }
+        return n;
+    }
+
+    // Open cards past their day, counted across every block: a list says it is
+    // late even while the block holding the late card is folded away.
+    readonly property int overdueTasks: {
+        revision;
+        board.todayIso; // re-count when the day turns over
+        var n = 0;
+        for (var i = 0; i < sectionsModel.count; i++) {
+            var arr = taskArrayOf(i);
+            for (var j = 0; j < arr.length; j++) {
+                if (arr[j].done) continue;
+                var d = Dates.daysUntil(arr[j].due);
+                if (!isNaN(d) && d < 0) n++;
+            }
         }
         return n;
     }
@@ -334,6 +357,15 @@ Item {
                 onAccepted: commitRename()
                 onActiveFocusChanged: if (!activeFocus && visible) commitRename()
                 Keys.onEscapePressed: { visible = false; }
+            }
+
+            // Late work is worth its own mark: the open count says how much is
+            // left, this says how much of it should already be gone.
+            PC3.Label {
+                visible: !renameField.visible && column.overdueTasks > 0
+                text: i18np("%1 late", "%1 late", column.overdueTasks)
+                color: Kirigami.Theme.negativeTextColor
+                font: Kirigami.Theme.smallFont
             }
 
             PC3.Label {

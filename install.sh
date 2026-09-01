@@ -22,6 +22,13 @@ if ! kpackagetool6 --type Plasma/Applet --show "$ID" >/dev/null 2>&1; then
     exit 1
 fi
 
+# The widget list looks the applet icon up by theme name, so the bundled logo
+# has to exist in the user's icon theme as well as inside the package.
+ICONDIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+mkdir -p "$ICONDIR"
+cp "$DIR/contents/icons/$ID.svg" "$ICONDIR/$ID.svg"
+touch "$ICONDIR/.." 2>/dev/null || true
+
 # Plasma compiles applet QML into a disk cache; stale entries survive an upgrade.
 rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/plasmashell/qmlcache" \
        "${XDG_CACHE_HOME:-$HOME/.cache}/qmlcache" 2>/dev/null || true
