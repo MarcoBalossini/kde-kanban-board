@@ -34,6 +34,18 @@ PlasmoidItem {
     readonly property bool cfgHideDone: Plasmoid.configuration.hideDone
     readonly property int columnCount: columnsModel.count
 
+    // How wide the board wants to be: every list at its configured width, the
+    // add-list strip, the gaps between them and the outer margins. The popup
+    // opens at this size instead of a fixed guess that would clip the last
+    // list or pad empty space beside it.
+    readonly property int boardNaturalWidth: {
+        var n = Math.max(1, columnCount);
+        return n * Plasmoid.configuration.columnWidth
+             + Math.round(Kirigami.Units.gridUnit * 2.5)
+             + Kirigami.Units.largeSpacing * n
+             + Kirigami.Units.largeSpacing * 2;
+    }
+
     // ---- state ---------------------------------------------------------
     property bool boardLoaded: false
     property Item dragLayer: null
@@ -214,7 +226,14 @@ PlasmoidItem {
 
     // ---- plasmoid wiring ----------------------------------------------
     Plasmoid.backgroundHints: PlasmaCore.Types.NoBackground
-    preferredRepresentation: fullRepresentation
+
+    // On the desktop the board *is* the widget. In a panel it cannot be: the
+    // panel would stretch to fit it. There the applet is an icon and the board
+    // lives in the popup behind it.
+    readonly property bool inPanel: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
+                                 || Plasmoid.formFactor === PlasmaCore.Types.Vertical
+
+    preferredRepresentation: inPanel ? compactRepresentation : fullRepresentation
 
     toolTipMainText: Plasmoid.configuration.boardTitle
     toolTipSubText: {
@@ -231,8 +250,15 @@ PlasmoidItem {
         id: compact
         hoverEnabled: true
         onClicked: root.expanded = !root.expanded
+
+        // The panel imposes one axis and asks for the other; ask back for a
+        // square so the icon is never letterboxed. Only the free axis is bound
+        // to the imposed one, so there is no cycle.
+        readonly property bool vertical: Plasmoid.formFactor === PlasmaCore.Types.Vertical
         Layout.minimumWidth: Kirigami.Units.iconSizes.small
         Layout.minimumHeight: Kirigami.Units.iconSizes.small
+        Layout.preferredWidth: vertical ? Kirigami.Units.iconSizes.small : compact.height
+        Layout.preferredHeight: vertical ? compact.width : Kirigami.Units.iconSizes.small
 
         Kirigami.Icon {
             anchors.fill: parent
@@ -276,9 +302,22 @@ PlasmoidItem {
             root.recount();
         }
 
+        // The popup is sized from these hints: the shell reads
+        // Layout.preferredWidth off the full representation and, if it is not
+        // above zero, falls back to a fixed default far narrower than a board.
+        // So the hint must never depend on anything that reads zero early --
+        // Screen.desktopAvailableWidth does, before the item has a window, and
+        // clamping against it collapsed the hint into that fallback. Plasma
+        // already fits the popup to the screen on its own.
+        //
+        // columnRow is the truth about how wide the lists came out; the
+        // arithmetic estimate stands in for it until the delegates exist.
         Layout.minimumWidth: Kirigami.Units.gridUnit * 22
         Layout.minimumHeight: Kirigami.Units.gridUnit * 14
-        Layout.preferredWidth: Kirigami.Units.gridUnit * 36
+        Layout.preferredWidth: Math.max(Layout.minimumWidth,
+                                        root.boardNaturalWidth,
+                                        columnRow.implicitWidth
+                                            + Kirigami.Units.largeSpacing * 2)
         Layout.preferredHeight: Kirigami.Units.gridUnit * 24
 
         Rectangle {
